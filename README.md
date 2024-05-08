@@ -1,6 +1,6 @@
 # GSU-R-Workshop-Day3
  
-This workshp works through data used in [Kim et al. (2019)](https://doi.org/10.1017%2FS0272263119000093)
+This workshop works through data used in [Kim et al. (2019)](https://doi.org/10.1017%2FS0272263119000093)
 
 
 > Kim, Y., Jung, Y., & Skalicky, S. (2019). Linguistic alignment, learner characteristics, and the production of stranded prepositions in relative clauses. *Studies in Second Language Acquisition*, *41*(5), 937–969.
