@@ -1,0 +1,126 @@
+---
+title: "01-production-describe-visualise"
+author: "Stephen Skalicky"
+output: html_document
+---
+
+# visualise the production data
+
+In this notebook, the production data from the stranded preposition study is described and visualised. Much like the priming data, the production data consists of frequency counts. Specifically, for each question on each test, the participant answer was scored 0 if it did not contain a stranded preposition, and scored 1 if it did contain a stranded preposition. 
+
+We will recreate those analyses, but also look into how the data could also be calculated using sum scores for each test. This will allow us to compare logistic vs. continuous regression models. But first we describe and visualise these versions of the data. 
+
+## Load in libraries, read in the data
+
+```{r}
+library(tidyverse)
+```
+
+Read in the data - the mutate call reorders the level of time so that it will display as pre -> immediate -> delayed. 
+
+```{r}
+prod_dat <- read_csv('sp-production.csv') %>%
+  mutate(time = factor(time, levels = c('pre', 'post1', 'post2'), labels = c('pre', 'immediate', 'delayed')))
+```
+
+
+## Recreate Table 4 of frequency counts
+
+Using a pipe with a `group_by()` and `summarise()` call, we can again create a tally of 0s and 1s in the different combined variables of interest. In this case, the data has the previous grouping structure of FTF and SCMC modality. But there are two new variables: time (pre, immediate, delayed) and group (control vs. experimental. )
+
+```{r}
+
+production_descriptives <- prod_dat %>%
+  group_by(time, group, modality, score) %>%
+  summarise(frequency = n())
+production_descriptives
+```
+
+## Plot the frequencies
+
+Use a bar chart to plot the frequencies in their different conditions. Remember this requires forcing score into a binary variable. We could create a separate variable using factor, but we could also just use `factor()` in the call to ggplot. 
+
+*what does this plot show us in terms of "learning"?*
+- compare exp vs. control
+- compare modalitites
+
+
+```{r}
+ggplot(prod_dat, aes(x = factor(score), fill = time)) + 
+  facet_grid(modality ~ group) + 
+  geom_bar(position = position_dodge(), width = .8, alpha = .8) + 
+  theme_bw() + 
+  labs(x = 'frequency', y = 'stranded preposition production\n (1 = produced)')
+```
+
+# convert to sum scores!
+
+We did not do this in the paper, but let's consider how we could also view the data in terms of total production score. We would do this by summing the total number of stranded prepositions produced. Participants would go from having one observation per test question to instead having one observation per production test (pre/immediate/delayed). The outcome variable also changes from a binary variable (0 or 1) to a continuous variable.
+
+## new summarised scores data frame. 
+
+First create a new data set. We want to sum each person's score for each person's time, so we `group_by()` subject and test, and create a new sum variable. 
+
+```{r}
+prod_dat_sum <- prod_dat %>%
+  group_by(subject, time) %>%
+  summarise(total_score = sum(score))
+```
+
+## readding the old values to the new values
+
+The result is a much smaller data frame. And, one problem here is that we have lost all the other information we need, such as modality and group. We could adjust the `group_by()` score to include all of those variables, but we can also use this as an opportunity to learn about joins. 
+
+Create a new dataframe by merging our summarised values with our previous values. We will use a `left_join()` to do so. A left join will compare two dataframes and join them based on matching columns/values. The first dataframe will be the dataframe that is retained where there are matches in the other data. You can read more about joins here: https://www.stephenskalicky.com/joins.html
+
+Below I first create a dataframe containing all of the columns we want to join. I then use `unique()` to get rid of repeated rows. The result is a dataframe where each participant has 3 rows - 1 row per test + the other metadata we need.
+
+```{r}
+prod_join_values <- prod_dat %>%
+  select(subject, priming_amount, group, modality, test, time, cloze, wmc, rec_pre) %>%
+  unique()
+
+```
+
+## using left join
+
+We can then use `left_join()` to add the sum scores to this data. 
+This process is a bit cumbersome, and could be completed in several other ways.
+
+```{r}
+prod_dat_2 <- prod_join_values %>%
+  left_join(prod_dat_sum)
+```
+
+## descriptive statistics of total score
+
+Anyhow, since we now have a continuous variable, we may want to calculate the mean and standard deviation for the new sum score:
+
+```{r}
+prod_sum_descriptives <- prod_dat_2 %>%
+  group_by(time, group, modality) %>%
+  summarise(mean_score = mean(total_score), sd_score = sd(total_score))
+prod_sum_descriptives
+```
+
+
+## boxplots of total score
+Plots are always a bit more interesting. What does this plot tell us? Is it the same story as using the frequency / binary score plot? 
+
+
+```{r}
+ggplot(prod_dat_2, aes(y = total_score, x = time, fill = modality)) +
+  facet_wrap(. ~ group) + 
+  geom_boxplot(alpha = .8)
+
+```
+
+## output the data
+
+since we created a new set of data, output it for later statistical analysis - in the next notebook!
+
+
+```{r}
+write_csv(prod_dat_2, 'sp-production-sum.csv')
+
+```

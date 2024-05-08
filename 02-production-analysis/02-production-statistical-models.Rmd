@@ -1,0 +1,327 @@
+---
+title: "02-production-statistical-analysis"
+author: "Stephen Skalicky"
+date: "2024-05-07"
+output: html_document
+---
+
+# pre/posttest, gain scores, and comparing logistic vs. continuous models
+In this notebook we will first re-create the logistic models used in the published paper, as well as the interaction plot. In doing we there will be a focus on discussing what is actually being compared in a pre-post design, and ensuring that our posthocs, decomposition, and interactions are modelling what we intend them to model.
+
+Then we will do the same thing with the continuous version of the data, so you can see how to model continuous rather than logistic distributions. 
+
+# Load in libraries
+
+- `tidyverse` for data manipulation and loading
+- `lme4` to construct regression models
+- `emmeans` to decompose fit models
+- `performance` to assess model fit
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(emmeans)
+library(performance)
+```
+
+# logistic regression predicting production of stranded prepositions
+
+The previous analysis showed us how to do model comparisons and tests, so here we will fast forward that a bit and instead work with a fully defined model related to the research questions. This model includes a three-way interaction between group (exp vs. control), time (pre/immediate/delayed), and modality (FTF vs. SCMC)
+
+Load in the logistic data
+
+```{r}
+dat_logistic <- read_csv('sp-production.csv') %>%
+  mutate(time = factor(time, levels = c('pre', 'post1', 'post2'), labels = c('pre', 'immediate', 'delayed')))
+```
+
+## Fit logistic model
+
+fit the model, inspect the output, and look at its goodness of fit
+
+We need to specify a different optimizer and max functions (just as in the original paper). Welcome to the fun of glmer and R!
+
+```{r}
+m1 <- glmer(score ~ group*modality*time + (1|subject) + (1|verb), data = dat_logistic, family = binomial(link = 'logit'),
+            glmerControl(optimizer = "bobyqa",optCtrl=list(maxfun = 100000)))
+```
+
+Look at the model performance based on R2 and other metrics. 
+
+```{r}
+performance::model_performance(m1)
+```
+Look at the summary of the model - difficult right now to interpret the contrasts. 
+
+```{r}
+summary(m1)
+```
+
+## assessing growth and gains. 
+
+This model is fundamentally about growth - did production of stranded prepositions increase from one time point to the next (i.e., from pre to post). We likely want to answer a few questions 
+
+1. Did the groups all start at the same place? Are their pre-test scores comparable? 
+2. For each group, is there a significant increase between immediate/delayed and pre? 
+3. For each group, is there a significant difference between immediate and delayed?
+4. If there is growth/gains/learning, is the magnitude of that growth/learning any stronger or weaker for any of the groups?
+
+All of these questions can be answered using different combinations of emmeans calls. 
+
+### comparing groups at pre-test (binary)
+
+```{r}
+# get pairwise contrasts of group + modality by time, and specify we only want pre-test. 
+emmeans(m1, pairwise ~ c(group,modality)|time, at = list(time = 'pre'), type = 'response')
+```
+
+What happens if we do *not* specify pretest only? Then we get contrasts for each test:
+
+these contrasts are interesting and useful, but they are snapshots at each timepoint. They do *not* measure the degree of change, they measure the specific prediction for that combination. So we can say that the exp groups had higher predicted probability of producing a stranded preposition on immediate and delayed posttests when compared to control, but this does not by itself indicate they had greater growth/learning (although it is closely related).
+
+```{r}
+# get pairwise contrasts of group + modality by time, and specify we only want pre-test. 
+emmeans(m1, pairwise ~ c(group,modality)|time, type = 'response')
+```
+### comparing growth within groups (binary)
+
+Before we get to measuring growth between groups, let's first measure the extent of any growth within groups. Inspect the output and consider what this tells us when compared to the prior call? 
+
+(take a moment to reflect on the very different information presented based on how the emmeans call is constructed)
+
+```{r}
+emmeans(m1, pairwise ~ time|c(modality, group),type= 'response')
+```
+### plotting growth within groups (binary)
+
+The contrasts above are the contrasts we can use to recreate the interaction plot published in SSLA.
+
+To do so, we save the emmeans from the contrasts to a data frame. Note that `$emmeans` is used to get just the estimates (not the contrasts.)
+
+```{r}
+production_interaction <- as.data.frame(emmeans(m1, pairwise ~ time|c(modality, group),type= 'response')$emmeans)
+
+```
+
+Plot the estimates - this is close enough to the published paper that it's good enough. There are styling differences. 
+
+In a paper, we might want to show this plot, as well as report the points *and* their contrasts in a table.  
+
+```{r}
+ggplot(production_interaction, aes(y = prob, x = modality, shape = group, group = group, lty = group)) + 
+  facet_wrap(. ~ time) + 
+  geom_point() +
+  geom_line() + 
+  # make the y axis from 0 to 1, more realistic view of the effects. 
+  ylim(0,1) + 
+  # i can't figure out how to get the same theme from the paper, hah. 
+  theme_linedraw() +
+  # move the legend into the first facet, remove the legend title. 
+  theme(legend.position = c(.1, .9), legend.title = element_blank()) + 
+  labs(y = 'predicted probability\n of stranded preposition production', x = '', title = 'production tests - binary dv', caption = '1 = produced a stranded preposition')
+
+```
+
+
+## comparing growth between groups (binary)
+
+Finally, we want to compare the degree of growth between groups - whether exp "learned" more than the control group, and whether there are any differences in "learning" between FTF and SCMC within the exp group. 
+
+This means that we cannot compare the groups at any one timepoint - we need to compare the *difference* between the difference in growth. Said another way, the pairwise of pairwise contrasts :) 
+
+Here is the syntax for how to perform such tests. It first generates the emmeans call and saves it to a variable. 
+
+Then, the `contrast` function is used to which is wrapped within a `contrast()` call, which specifies that the contrast should focus on pairwise interaction. 
+
+```{r}
+# interaction between group and time (by modality), 
+m1_interaction <- emmeans(m1,  ~ group*time|modality, type = 'response')
+
+contrast(m1_interaction, interaction = c('pairwise'))
+```
+
+It is important to understand the difference between this and the prior contrasts. The contrasts in this section are differences in *growth*, whereas the values above were differences between two predicted estimates. 
+
+
+# repeat for continuous version of the model
+
+Now that we've recreated the basic model, let's compare against a continuous version. We created an aggregated version of the data in the previous notebook - read it in here. 
+
+Note how much smaller this data is - 282 rows vs. 3383
+
+```{r}
+# i'm redoing the factor call to set an explicit order of the labels
+dat_continuous <- read_csv('sp-production-sum.csv') %>%
+     mutate(time = factor(time, levels = c('pre', 'immediate', 'delayed'), labels = c('pre', 'immediate', 'delayed')))
+
+```
+
+## fit continuous model 
+
+We will recreate the same model as above, except use `lmer`. The random intercept of `verb` is no longer available - replace with `test`
+
+```{r}
+c1 <- lmer(total_score ~ group*modality*time + (1|subject) + (1|test), data = dat_continuous)
+```
+
+A much higher R2 than the logistic model. 
+
+```{r}
+performance::model_performance(c1)
+```
+
+Much like the model above, we cannot easily interpret the effects from the regression output
+
+```{r}
+summary(c1)
+```
+
+
+### comparing groups at pretest (continuous)
+
+We see that at the pretest there are no significant differences among the groups. which is good. 
+
+```{r}
+emmeans(c1, pairwise ~ c(group,modality)|time, at = list(time = 'pre'))
+
+```
+
+
+### comparing growth within groups (continuous)
+
+Run the same code to compare whether any groups had differences between the tests. 
+
+```{r}
+emmeans(c1, pairwise ~ time|c(modality, group))
+```
+
+### plotting growth within groups (continuous)
+
+Make the same plot, but with emmeans instead of probability. 
+
+```{r}
+production_interaction_continuous <- as.data.frame(emmeans(c1, pairwise ~ time|c(modality, group))$emmeans)
+```
+
+Plot the estimates. What do we see? 
+
+How do we explain this versus logistic? In this figure, the y axis is the predicted mean value. So we can interpret that directly as predicted mean "score" on the production test. 
+
+At pretest, all predicted mean scores were below 2.5. This remained the case for control group at pre, immediate, and delayed. 
+
+But the means went to 6 and then 5.25 for the cmc group, and from ~4 to ~4 for the FTF group. 
+
+Which way of describing the data / effect do you prefer? Which one do you think makes more sense for this data? 
+
+```{r}
+ggplot(production_interaction_continuous, aes(y = emmean, x = modality, shape = group, group = group, lty = group)) + 
+  facet_wrap(. ~ time) + 
+  geom_point() +
+  geom_line() + 
+  # make the y axis from 0 to 1, more realistic view of the effects. 
+  # i can't figure out how to get the same theme from the paper, hah. 
+  theme_linedraw() +
+  # the maximum score for any test is 12
+  ylim(0, 12) + 
+  # move the legend into the first facet, remove the legend title. 
+  theme(legend.position = c(.1, .5), legend.title = element_blank()) + 
+  labs(y = 'predicted mean score', x = '', title = 'production tests - continuous dv', caption = 'maximum possible score on a test is 12')
+```
+## comparing growth between groups (binary)
+
+Instead of the predicted odds between groups, we now get predicted mean differences in growth. 
+
+```{r}
+# interaction between group and time (by modality), 
+c1_interaction <- emmeans(c1,  ~ group*time|modality, type = 'response')
+
+contrast(c1_interaction, interaction = c('pairwise'))
+```
+
+
+# Add priming amount
+
+In the published paper, we found that priming amount was a good predictor of production and included it as a main effect only. Let's explore this for the continuous model. 
+
+Below, create z-scored version of priming amount. Fit a second model with priming amount, and then do a model comparison. 
+```{r}
+dat_continuous$priming_amount_z <- scale(dat_continuous$priming_amount, scale = T, center = T)
+```
+
+Fit the new model - let's add a 
+
+```{r}
+c2 <- lmer(total_score ~ group*modality*time + priming_amount_z +(1|subject) + (1|test), data = dat_continuous)
+
+```
+
+Model comparison
+
+```{r}
+anova(c1, c2)
+```
+
+Second model indices of fit
+- a marginal R2 increase of ~16%, not bad. (the same thing occurs for the logistic model, an R2 increase of 10%)
+
+```{r}
+performance::model_performance(c2)
+```
+
+Because priming amount is entered as a main effect, we can assess its significance *and* effect through the model summary itself. 
+
+```{r}
+summary(c2)
+```
+
+```{r}
+emmip(c2, ~ priming_amount_z, var = 'priming_amount_z', cov.reduce = F, at = list(group = 'exp'), CIs = T)
+```
+
+
+Let's end with my favourite thing - making a plot.
+
+
+```{r}
+
+priming_amount_plot <- emmip(c2, ~ priming_amount_z, var = 'priming_amount_z', cov.reduce = F, at = list(group = 'exp'), CIs = T, plotit = F)
+
+```
+
+How could you explain this chart at a conference? What is the predicted total score for people at mean values of priming amount? What about those who are +/- one standard deviation? 
+
+
+```{r}
+ggplot(priming_amount_plot, aes(y = yvar, x = xvar)) + 
+  geom_ribbon(aes(ymin = LCL, ymax = UCL), alpha = .2, fill = 'lightcoral', color = 'black') + 
+  geom_line(lty = 2, color = 'red') +
+  geom_vline(xintercept = 0, lty = 'dashed', colour = 'dodgerblue') + 
+  labs(title = 'Effect of Priming Amount', subtitle = 'more priming = more production!', y = 'estimated total production score\n(0-12)', x = 'priming amount \n z-scored', caption = 'blue vertical line represents mean of priming amount! shaded region is the 95% confidence interval') + 
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# fin
+```
+#############
+## THE END ##
+#############
+
+- you will never find comfort in learning the one 'correct' way to do your statistical analysis, because it doesn't exist. 
+
+if you have any questions, please email Stephen:
+
+stephen.skalicky@vuw.ac.nz
+```
